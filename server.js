@@ -1,5 +1,5 @@
 // server.js
-require('dotenv').config(); // Load environment variables
+require('dotenv').config(); 
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
@@ -7,7 +7,7 @@ const { verifyToken, adminOnly, employeeOrAdmin } = require("./authMiddleware");
 
 const app = express();
 
-// Use environment variables for the frontend URL in production
+/* ===================== CORS CONFIGURATION ===================== */
 app.use(cors({ 
     origin: process.env.FRONTEND_URL || "http://localhost:3000", 
     credentials: true 
@@ -15,7 +15,6 @@ app.use(cors({
 app.use(express.json());
 
 /* ===================== DATABASE CONNECTION ===================== */
-// Using environment variables for sensitive info
 const db = mysql.createPool({
   host: process.env.DB_HOST || "database-1.cvuukc64q17g.us-east-1.rds.amazonaws.com",
   user: process.env.DB_USER || "admin",
@@ -51,13 +50,17 @@ const syncUserToDb = (userData) => {
 
 /* ===================== ROUTES ===================== */
 
+// 1. Health Check (To verify deployment)
+app.get("/", (req, res) => {
+    res.send("🚀 Backend is running and connected!");
+});
+
+// 2. Sync User
 app.post("/sync-user", verifyToken, async (req, res) => {
   try {
     const { cognito_id } = req.user;
-
     db.query("SELECT user_role FROM users WHERE cognito_id = ?", [cognito_id], async (err, rows) => {
       if (err) return res.status(500).json({ error: "DB Fetch error" });
-
       if (rows.length > 0) {
         return res.json({ message: "User synced from DB", role: rows[0].user_role });
       } else {
@@ -66,27 +69,22 @@ app.post("/sync-user", verifyToken, async (req, res) => {
       }
     });
   } catch (err) {
-    console.error("Sync failed:", err.message);
     res.status(500).json({ error: "Sync failed" });
   }
 });
 
+// 3. Get All Users (Admin/Employee Only)
 app.get("/users", verifyToken, employeeOrAdmin, (req, res) => {
   const { cognito_id } = req.user;
-
   db.query("SELECT user_role FROM users WHERE cognito_id = ?", [cognito_id], (err, userRows) => {
     if (err) return res.status(500).json({ error: "Permission check failed" });
-
     const actualRole = userRows.length > 0 ? userRows[0].user_role : req.user.user_role;
-
     let sql = "SELECT cognito_id, email, firstName, user_role FROM users ORDER BY firstName";
     let params = [];
-
     if (actualRole === "Employee") {
       sql = "SELECT cognito_id, email, firstName, user_role FROM users WHERE user_role = ? ORDER BY firstName";
       params = ["Candidate"];
     }
-
     db.query(sql, params, (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json(rows);
@@ -94,6 +92,16 @@ app.get("/users", verifyToken, employeeOrAdmin, (req, res) => {
   });
 });
 
+// 4. FIX: Get My Own Tasks (This solves your 404 error)
+app.get("/tasks", verifyToken, (req, res) => {
+  const { cognito_id } = req.user;
+  db.query("SELECT * FROM tasks WHERE user_id=? ORDER BY created_at DESC", [cognito_id], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// 5. Get Tasks by ID (For Admin/Employee viewing others)
 app.get("/tasks/:id", verifyToken, (req, res) => {
   const targetId = req.params.id;
   const { cognito_id, user_role } = req.user;
@@ -113,7 +121,6 @@ app.get("/tasks/:id", verifyToken, (req, res) => {
       proceed();
     } else if (requesterRole === "Employee") {
       db.query("SELECT user_role FROM users WHERE cognito_id = ?", [targetId], (err, targetRows) => {
-        if (err) return res.status(500).json({ error: "Target lookup failed" });
         if (targetRows.length > 0 && targetRows[0].user_role === "Candidate") {
           proceed();
         } else {
@@ -126,6 +133,7 @@ app.get("/tasks/:id", verifyToken, (req, res) => {
   });
 });
 
+// 6. Add Task
 app.post("/add-task", verifyToken, (req, res) => {
   const { task_text, status } = req.body;
   if (!task_text || !task_text.trim()) return res.status(400).json({ error: "Task text is required" });
@@ -140,10 +148,10 @@ app.post("/add-task", verifyToken, (req, res) => {
   );
 });
 
+// 7. Update User Role (Admin Only)
 app.put("/update-role/:id", verifyToken, adminOnly, (req, res) => {
   const { role } = req.body;
   const validRoles = ["Admin", "Employee", "Candidate"];
-
   if (!role || !validRoles.includes(role)) return res.status(400).json({ error: "Invalid role" });
 
   db.query("UPDATE users SET user_role=? WHERE cognito_id=?", [role, req.params.id], (err) => {
@@ -152,14 +160,13 @@ app.put("/update-role/:id", verifyToken, adminOnly, (req, res) => {
   });
 });
 
+// 8. Delete Task
 app.delete("/delete-task/:id", verifyToken, (req, res) => {
   const { cognito_id, user_role } = req.user;
-
   db.query("SELECT user_role FROM users WHERE cognito_id = ?", [cognito_id], (err, rows) => {
     if (err) return res.status(500).json({ error: "Auth check failed" });
     const actualRole = rows.length > 0 ? rows[0].user_role : user_role;
     const isAdmin = actualRole === "Admin";
-
     const sql = isAdmin ? "DELETE FROM tasks WHERE task_id=?" : "DELETE FROM tasks WHERE task_id=? AND user_id=?";
     const params = isAdmin ? [req.params.id] : [req.params.id, cognito_id];
 
@@ -172,6 +179,5 @@ app.delete("/delete-task/:id", verifyToken, (req, res) => {
 });
 
 /* ===================== START SERVER ===================== */
-// Use process.env.PORT for deployment, fallback to 5000 for local
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Backend running on port ${PORT}`));
