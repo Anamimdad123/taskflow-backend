@@ -1,19 +1,26 @@
 // server.js
+require('dotenv').config(); // Load environment variables
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
 const { verifyToken, adminOnly, employeeOrAdmin } = require("./authMiddleware");
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+
+// Use environment variables for the frontend URL in production
+app.use(cors({ 
+    origin: process.env.FRONTEND_URL || "http://localhost:3000", 
+    credentials: true 
+}));
 app.use(express.json());
 
 /* ===================== DATABASE CONNECTION ===================== */
+// Using environment variables for sensitive info
 const db = mysql.createPool({
-  host: "database-1.cvuukc64q17g.us-east-1.rds.amazonaws.com",
-  user: "admin",
-  password: "Anumimdad12",
-  database: "my_app_data",
+  host: process.env.DB_HOST || "database-1.cvuukc64q17g.us-east-1.rds.amazonaws.com",
+  user: process.env.DB_USER || "admin",
+  password: process.env.DB_PASSWORD || "Anumimdad12",
+  database: process.env.DB_NAME || "my_app_data",
   connectionLimit: 10,
   ssl: { rejectUnauthorized: false }
 });
@@ -43,6 +50,7 @@ const syncUserToDb = (userData) => {
 };
 
 /* ===================== ROUTES ===================== */
+
 app.post("/sync-user", verifyToken, async (req, res) => {
   try {
     const { cognito_id } = req.user;
@@ -91,6 +99,7 @@ app.get("/tasks/:id", verifyToken, (req, res) => {
   const { cognito_id, user_role } = req.user;
 
   db.query("SELECT user_role FROM users WHERE cognito_id = ?", [cognito_id], (err, reqRows) => {
+    if (err) return res.status(500).json({ error: "Requester lookup failed" });
     const requesterRole = reqRows.length > 0 ? reqRows[0].user_role : user_role;
 
     const proceed = () => {
@@ -104,6 +113,7 @@ app.get("/tasks/:id", verifyToken, (req, res) => {
       proceed();
     } else if (requesterRole === "Employee") {
       db.query("SELECT user_role FROM users WHERE cognito_id = ?", [targetId], (err, targetRows) => {
+        if (err) return res.status(500).json({ error: "Target lookup failed" });
         if (targetRows.length > 0 && targetRows[0].user_role === "Candidate") {
           proceed();
         } else {
@@ -146,6 +156,7 @@ app.delete("/delete-task/:id", verifyToken, (req, res) => {
   const { cognito_id, user_role } = req.user;
 
   db.query("SELECT user_role FROM users WHERE cognito_id = ?", [cognito_id], (err, rows) => {
+    if (err) return res.status(500).json({ error: "Auth check failed" });
     const actualRole = rows.length > 0 ? rows[0].user_role : user_role;
     const isAdmin = actualRole === "Admin";
 
@@ -154,12 +165,13 @@ app.delete("/delete-task/:id", verifyToken, (req, res) => {
 
     db.query(sql, params, (err, result) => {
       if (err) return res.status(500).json({ error: "Delete failed" });
-      if (!result.affectedRows) return res.status(403).json({ error: "Unauthorized" });
+      if (!result.affectedRows) return res.status(403).json({ error: "Unauthorized or task not found" });
       res.json({ message: "Task deleted successfully" });
     });
   });
 });
 
 /* ===================== START SERVER ===================== */
-const PORT = 5000;
+// Use process.env.PORT for deployment, fallback to 5000 for local
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Backend running on port ${PORT}`));
