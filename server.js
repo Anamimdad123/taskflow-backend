@@ -7,20 +7,18 @@ const { verifyToken, adminOnly, employeeOrAdmin } = require("./authMiddleware");
 const app = express();
 
 /* ===================== CORS CONFIGURATION ===================== */
-// These are the URLs allowed to talk to your backend
 const allowedOrigins = [
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:3000",
-    "https://main.d18b34rzjw22p4.amplifyapp.com" // Your live Amplify URL
+    "https://main.d18b34rzjw22p4.amplifyapp.com" 
 ];
 
 app.use(cors({ 
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl)
         if (!origin) return callback(null, true);
         if (allowedOrigins.indexOf(origin) === -1) {
-            return callback(new Error('The CORS policy for this site does not allow access from the specified Origin.'), false);
+            return callback(new Error('CORS blocked'), false);
         }
         return callback(null, true);
     },
@@ -29,20 +27,18 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-/**
- * FIX: 'app.options' with '*' causes a PathError in newer Node/Express versions.
- * Using a Regular Expression /(.*)/ instead.
- */
 app.options(/(.*)/, cors()); 
 
 app.use(express.json());
 
 /* ===================== DATABASE CONNECTION ===================== */
 const db = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  // priority is given to Env variables, but defaults are filled with your RDS data
+  host: process.env.DB_HOST || "database-1.cvuukc64q17g.us-east-1.rds.amazonaws.com",
+  user: process.env.DB_USER || "admin",
+  password: process.env.DB_PASSWORD || "Anumimdad12",
+  database: process.env.DB_NAME || "my_app_data",
+  port: 3306,
   connectionLimit: 10,
   ssl: { rejectUnauthorized: false }
 });
@@ -50,7 +46,7 @@ const db = mysql.createPool({
 // Test Connection on start
 db.getConnection((err, conn) => {
     if (err) {
-        console.error("❌ Database Connection Failed. Check your RDS Security Groups!");
+        console.error("❌ Database Connection Failed!");
         console.error("Error Detail:", err.message);
     } else {
         console.log("✅ Database Connected successfully to RDS");
@@ -64,7 +60,6 @@ const syncUserToDb = (userData) => {
     const { cognito_id, email, firstName, user_role } = userData;
     const safeName = firstName || "User";
     
-    // Safety: Ensure your specific email is ALWAYS Admin
     let safeRole = user_role || "Candidate";
     if (email === "imdadanam4@gmail.com") safeRole = "Admin";
 
@@ -91,7 +86,6 @@ app.get("/", (req, res) => {
     res.send("🚀 Backend is running and connected to RDS!");
 });
 
-// Sync User Profile
 app.post("/sync-user", verifyToken, async (req, res) => {
   try {
     const { cognito_id, email } = req.user;
@@ -112,7 +106,6 @@ app.post("/sync-user", verifyToken, async (req, res) => {
   }
 });
 
-// Get List of Users (Admin/Employee only)
 app.get("/users", verifyToken, employeeOrAdmin, (req, res) => {
   const { cognito_id } = req.user;
   db.query("SELECT user_role FROM users WHERE cognito_id = ?", [cognito_id], (err, userRows) => {
@@ -134,7 +127,6 @@ app.get("/users", verifyToken, employeeOrAdmin, (req, res) => {
   });
 });
 
-// Admin Only: Delete User from DB
 app.delete("/delete-user/:id", verifyToken, adminOnly, (req, res) => {
     const targetId = req.params.id;
     if (targetId === req.user.cognito_id) return res.status(400).json({ error: "Cannot delete self" });
@@ -145,7 +137,6 @@ app.delete("/delete-user/:id", verifyToken, adminOnly, (req, res) => {
     });
 });
 
-// Get personal tasks
 app.get("/tasks", verifyToken, (req, res) => {
   db.query("SELECT * FROM tasks WHERE user_id=? ORDER BY created_at DESC", [req.user.cognito_id], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -153,7 +144,6 @@ app.get("/tasks", verifyToken, (req, res) => {
   });
 });
 
-// Create a new task
 app.post("/add-task", verifyToken, (req, res) => {
   const { task_text, status } = req.body;
   if (!task_text) return res.status(400).json({ error: "Missing task text" });
@@ -171,7 +161,6 @@ app.post("/add-task", verifyToken, (req, res) => {
   );
 });
 
-// Delete a task (User can delete own, Admin can delete any)
 app.delete("/delete-task/:id", verifyToken, (req, res) => {
     const { cognito_id } = req.user;
     
@@ -187,7 +176,6 @@ app.delete("/delete-task/:id", verifyToken, (req, res) => {
     });
 });
 
-// Admin Only: Change user roles
 app.put("/update-role/:id", verifyToken, adminOnly, (req, res) => {
   const { role } = req.body;
   db.query("UPDATE users SET user_role=? WHERE cognito_id=?", [role, req.params.id], (err) => {
@@ -196,6 +184,5 @@ app.put("/update-role/:id", verifyToken, adminOnly, (req, res) => {
   });
 });
 
-/* ===================== START SERVER ===================== */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
